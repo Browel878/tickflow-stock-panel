@@ -53,8 +53,12 @@ def get_realtime_quote_interval() -> float:
     return load().get("realtime_quote_interval", 6.0)
 
 
-def get_realtime_watchlist_symbols() -> list[str]:
-    """Free 档自选实时监控标的:直接取自选页前 5 个。"""
+# Free 档自选实时: 每轮轮询最多查询的标的数 (free key 单批上限 5, 见 tiers.yaml free.quote.by_symbol)
+_REALTIME_WATCHLIST_BATCH = 5
+
+
+def _realtime_watchlist_all() -> list[str]:
+    """自选列表全部标的(去重保序, 不做数量截断)。"""
     try:
         from app.services import watchlist
         rows = watchlist.list_symbols()
@@ -66,13 +70,55 @@ def get_realtime_watchlist_symbols() -> list[str]:
         symbol = str((row or {}).get("symbol") or "").strip().upper()
         if symbol and symbol not in out:
             out.append(symbol)
-        if len(out) >= 5:
-            break
     return out
 
 
+def _realtime_watchlist_cursor() -> int:
+    """持久化游标: 下一轮自选实时轮询的起始偏移 (自选数量变化时自动兜底)。"""
+    try:
+        return max(0, int(load().get("realtime_watchlist_cursor", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _realtime_watchlist_batch(batch: int, *, advance: bool) -> list[str]:
+    """按游标环形取一批自选标的; advance=True 时推进并持久化游标。"""
+    symbols = _realtime_watchlist_all()
+    if not symbols:
+        return []
+    size = max(1, min(batch, len(symbols)))
+    cursor = _realtime_watchlist_cursor()
+    if cursor >= len(symbols):
+        cursor = 0
+    if len(symbols) <= size:
+        # 自选不足一批: 返回全部, 游标归零 (免重复写盘)
+        return list(symbols)
+    out = (symbols[cursor:] + symbols[:cursor])[:size]
+    if advance:
+        save({"realtime_watchlist_cursor": (cursor + size) % len(symbols)})
+    return out
+
+
+def get_realtime_watchlist_symbols() -> list[str]:
+    """Free 档自选实时监控标的: 当前游标处的 5 个 (只读, 不推进游标)。
+
+    供状态/设置页展示与开关空判使用; 轮询取数请用
+    advance_realtime_watchlist_symbols() 逐轮轮换, 覆盖全部自选标的。
+    """
+    return _realtime_watchlist_batch(_REALTIME_WATCHLIST_BATCH, advance=False)
+
+
+def advance_realtime_watchlist_symbols(batch: int = _REALTIME_WATCHLIST_BATCH) -> list[str]:
+    """Free 档自选实时监控标的: 返回下一批并推进游标, 使自选股逐轮轮换。
+
+    自选数量超过 batch 时, 每轮实时轮询拉取不同的一批, 全部覆盖一轮后再回到
+    开头 (环形); 游标持久化在 preferences.json, 进程重启后继续轮换。
+    """
+    return _realtime_watchlist_batch(batch, advance=True)
+
+
 def set_realtime_watchlist_symbols(symbols: list[str]) -> list[str]:  # noqa: ARG001
-    """兼容旧接口: Free 实时标的现在由自选页前 5 个决定。"""
+    """兼容旧接口: Free 实时标的现在由自选列表分批轮换决定。"""
     return get_realtime_watchlist_symbols()
 
 

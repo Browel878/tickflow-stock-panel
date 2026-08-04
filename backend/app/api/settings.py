@@ -413,6 +413,8 @@ def get_preferences() -> dict:
         "minute_data_provider": preferences.get_minute_data_provider(),
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "financial_data_provider": preferences.get_financial_provider(),
+        # Free 档轮换轮询: 当前批次的自选实时标的 (随轮询逐轮轮换, 只读快照;
+        # 空列表 = 自选为空)。勿当作固定的"前 5 个"列表使用。
         "realtime_watchlist_symbols": preferences.get_realtime_watchlist_symbols(),
         **preferences.get_realtime_quote_scope(),
         "pipeline_pull_a_share": preferences.get_pipeline_pull_a_share(),
@@ -757,7 +759,7 @@ class RealtimeWatchlistPrefs(BaseModel):
 
 @router.put("/preferences/realtime-watchlist")
 def update_realtime_watchlist(req: RealtimeWatchlistPrefs) -> dict:
-    """兼容旧入口；Free 实时标的由自选页前 5 个决定。"""
+    """兼容旧入口；Free 实时标的由自选列表分批轮换决定。"""
     from app.services import preferences
     symbols = preferences.set_realtime_watchlist_symbols(req.symbols)
     return {"realtime_watchlist_symbols": symbols}

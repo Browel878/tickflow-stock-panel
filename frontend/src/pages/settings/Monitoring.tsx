@@ -355,7 +355,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
         {isFreeTier && (
         <Card icon={Activity} title="自选股实时">
           <div className="mb-3 rounded-btn border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium leading-snug text-accent">
-            Free 档开启实时行情时自动监控「自选」页面前 5 个标的，最低 6 秒刷新。
+            Free 档开启实时行情时自动监控自选股：每轮轮询 5 只，按批次轮换覆盖全部自选标的，最低 6 秒刷新。
           </div>
           {watchlistSymbols.length > 0 ? (
             <div className="space-y-1.5">
@@ -378,7 +378,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
             </div>
           )}
           <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="text-[10px] text-muted">当前 {watchlistSymbols.length}/5 只</span>
+            <span className="text-[10px] text-muted">当前轮询批次 {watchlistSymbols.length}/5 只 · 自选超过 5 只时逐轮轮换</span>
             <Link
               to="/watchlist"
               className="px-3 py-1 rounded-btn bg-elevated text-secondary text-xs font-medium hover:text-foreground transition-colors"

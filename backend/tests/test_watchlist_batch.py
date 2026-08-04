@@ -29,7 +29,7 @@ def _run_fetch(svc, tf, watchlist: list[str], capset: CapabilitySet):
     """在完整 patch 环境下执行 _fetch_watchlist_quotes。"""
     with ExitStack() as stack:
         stack.enter_context(patch(
-            "app.services.preferences.get_realtime_watchlist_symbols",
+            "app.services.preferences.advance_realtime_watchlist_symbols",
             return_value=watchlist,
         ))
         stack.enter_context(patch(

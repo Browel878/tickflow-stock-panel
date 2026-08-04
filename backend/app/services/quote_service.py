@@ -478,13 +478,17 @@ class QuoteService:
         final_key = self._final_sync_key(phase)
         final_done = bool(final_key and final_key in self._final_sync_done)
         final_failed = self._final_sync_failed.get(final_key) if final_key else None
+        # Free 档轮换轮询: 当前批次的自选标的 (只读, 不推进游标), 供前端标记
+        # 本轮真正在监控的标的。
+        watchlist_batch = preferences.get_realtime_watchlist_symbols()
         return {
             "enabled": self._enabled,
             "running": self._running,
             "paused": self._paused,
             "mode": mode,
             "realtime_allowed": mode != "none",
-            "watchlist_symbol_count": len(preferences.get_realtime_watchlist_symbols()),
+            "watchlist_symbol_count": len(watchlist_batch),
+            "watchlist_symbols": watchlist_batch,
             "interval_s": self._interval,
             "symbol_count": self._symbol_count,
             "index_symbol_count": self._index_symbol_count,
@@ -750,7 +754,15 @@ class QuoteService:
         from app.tickflow.policy import detect_capabilities
         from app.tickflow.rate_limits import chunked, resolve_limit, sleep_between_batches
 
-        symbols = preferences.get_realtime_watchlist_symbols()
+        tf = get_paid_realtime_client()
+        if tf is None:
+            logger.warning("自选实时拉取失败:未配置付费服务器 API Key")
+            return
+
+        # 每轮轮询轮换一批自选标的: free 档单轮最多查 5 只, 自选多于此数时
+        # 逐轮轮换覆盖全部标的 (游标由 preferences 持久化)。
+        # 放在客户端判空之后: 无客户端时整轮跳过, 不推进游标、不写 preferences。
+        symbols = preferences.advance_realtime_watchlist_symbols()
         # 指数监控规则标的并入轮询 (与股票共享 batch 额度)
         engine = getattr(self._app_state, "monitor_engine", None) if self._app_state else None
         if engine:
@@ -761,11 +773,6 @@ class QuoteService:
                             symbols.append(_s)
         if not symbols:
             logger.info("自选实时未配置标的, 跳过行情拉取")
-            return
-
-        tf = get_paid_realtime_client()
-        if tf is None:
-            logger.warning("自选实时拉取失败:未配置付费服务器 API Key")
             return
 
         # 按 capability batch 上限分批: 股票+指数共享额度, 超过上限会导致整轮失败

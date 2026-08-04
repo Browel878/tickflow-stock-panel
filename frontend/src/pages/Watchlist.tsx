@@ -810,14 +810,14 @@ export function Watchlist() {
 
   // 实时监控圆点: 仅 Free/低档 "按自选股实时监控" 模式 (mode === 'watchlist') 下显示;
   // Starter+ 全市场模式 (mode === 'full_market') 全部标的都在监控, 标圆点无意义, 故不显示。
-  // 后端 Free 档实际只监控自选页前 N 个 (N = watchlist_symbol_count), 顺序与 allSymbols 一致。
+  // 后端 Free 档按批次轮换轮询: 每轮只监控 watchlist_symbols (当前批次, 每轮 5 只),
+  // 自选页按批轮换, 全部标的都会被覆盖到。
   const realtimeMode = quoteStatus.data?.mode
-  const watchlistMonitoredCount = quoteStatus.data?.watchlist_symbol_count ?? 0
   const showRealtimeDot = realtimeRunning && realtimeMode === 'watchlist'
-  // 真正被监控的标的集合 (自选列表前 watchlistMonitoredCount 个)
+  // 真正被监控的标的集合 (后端本轮轮询批次, 随轮换更新)
   const monitoredSymbols = useMemo(
-    () => showRealtimeDot ? new Set(allSymbols.slice(0, watchlistMonitoredCount)) : new Set<string>(),
-    [showRealtimeDot, allSymbols, watchlistMonitoredCount],
+    () => showRealtimeDot ? new Set(quoteStatus.data?.watchlist_symbols ?? []) : new Set<string>(),
+    [showRealtimeDot, quoteStatus.data?.watchlist_symbols],
   )
 
   // ===== 筛选 =====

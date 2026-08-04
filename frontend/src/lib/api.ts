@@ -1184,6 +1184,8 @@ export const api = {
       interval_s: number
       symbol_count: number
       watchlist_symbol_count?: number
+      /** Free 档当前轮询批次的自选标的 (轮换轮询, 每轮 5 只) */
+      watchlist_symbols?: string[]
       index_symbol_count?: number
       etf_symbol_count?: number
       quote_age_ms: number | null
