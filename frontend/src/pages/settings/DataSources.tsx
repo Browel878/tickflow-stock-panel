@@ -110,7 +110,13 @@ export function SettingsDataSourcesPanel() {
   const pluginList: PluginDataSourceItem[] = sources.data?.plugins ?? []
   const customList: DataSourceItem[] = sources.data?.custom ?? []
   const errors = sources.data?.errors ?? []
-  const activeName = prefs.data?.daily_data_provider || 'tickflow'
+  // 当前"激活"的数据源: 优先跟随 realtime 数据源(同花顺只提供实时行情,
+  // 若按 daily 判定会一直显示 TickFlow, 看起来像没切换成功)。
+  // realtime 为 tickflow 时回退到 daily 判定, 保持原有行为。
+  const activeName =
+    prefs.data?.realtime_data_provider && prefs.data.realtime_data_provider !== 'tickflow'
+      ? prefs.data.realtime_data_provider
+      : (prefs.data?.daily_data_provider || 'tickflow')
 
   // 插件 name → 状态 (供卡片渲染时判断 available/installing 等)
   const pluginMap = new Map(pluginList.map(p => [p.name, p]))

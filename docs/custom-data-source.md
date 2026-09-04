@@ -125,6 +125,27 @@ datasets:
 
 `change_pct` 和 `amplitude` 使用小数制,例如 `0.0366` 表示 `3.66%`。
 
+### realtime 全市场分页
+
+`realtime` 默认单次拉取全量快照。部分数据源(如同花顺 `/api/a-share/prices/snapshot`)
+默认按 `limit` / `offset` 分页,一次只返回前 N 只。配置分页字段后,provider 会翻页循环
+取完整个快照(如全市场 5566 只):
+
+```yaml
+realtime:
+  url: https://fuyao.aicubes.cn/api/a-share/prices/snapshot
+  method: GET
+  response_path: data.item
+  page_size: 100        # 每页条数,留空或省略 = 不分页(向后兼容)
+  offset_param: offset  # 翻页偏移参数名(默认 offset)
+  limit_param: limit    # 每页条数参数名(默认 limit)
+  total_path: data.total # 总条数在响应信封的点路径(默认 data.total)
+```
+
+- 翻页结束判定: 优先按 `total_path` 读到的总条数; 读不到时退化为「单页不足 `page_size` 视为末页」。
+- 单页不足 `page_size` 时也会提前结束, 避免死循环; 页数上限 500 兜底防打爆上游。
+- `page_size` 必须为正整数; 仅在 `realtime` 数据集生效。
+
 ## 请求约定
 
 - `daily` / `adj_factor` 会按 `batch` 切分 symbols。

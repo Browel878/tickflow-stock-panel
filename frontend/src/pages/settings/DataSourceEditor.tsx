@@ -507,9 +507,61 @@ function DatasetDetail({
                         </>
                       )}
                       {datasetKey === 'realtime' && (
-                        <div className="col-span-full text-[10px] text-muted/50">
-                          实时行情为全市场快照接口，不逐标的拉取，无需配置请求参数名。
-                        </div>
+                        <>
+                          <div className="col-span-full text-[10px] text-muted/50">
+                            实时行情为全市场快照接口，不逐标的拉取，无需配置 symbols/start/end 参数名。
+                            全市场快照按 limit/offset 分页时，可在此开启分页循环取完全部股票。
+                          </div>
+                          <div className="col-span-full grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                            <Field label="分页大小 (留空不分页)">
+                              <input
+                                type="number"
+                                min="1"
+                                value={cfg.page_size ?? ''}
+                                onChange={e => onUpdate({ page_size: e.target.value ? Number(e.target.value) : null })}
+                                onWheel={e => e.currentTarget.blur()}
+                                placeholder="100"
+                                className={`${INPUT_CLS} w-full`}
+                              />
+                            </Field>
+                            <Field label="offset 参数">
+                              <input
+                                value={cfg.offset_param ?? 'offset'}
+                                onChange={e => onUpdate({ offset_param: e.target.value || undefined })}
+                                placeholder="offset"
+                                className={`${INPUT_CLS} w-full`}
+                              />
+                            </Field>
+                            <Field label="limit 参数">
+                              <input
+                                value={cfg.limit_param ?? 'limit'}
+                                onChange={e => onUpdate({ limit_param: e.target.value || undefined })}
+                                placeholder="limit"
+                                className={`${INPUT_CLS} w-full`}
+                              />
+                            </Field>
+                            <Field label="页间隔秒">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={cfg.page_delay ?? 0}
+                                onChange={e => onUpdate({ page_delay: e.target.value === '' ? null : Number(e.target.value) })}
+                                onWheel={e => e.currentTarget.blur()}
+                                placeholder="0"
+                                className={`${INPUT_CLS} w-full`}
+                              />
+                            </Field>
+                            <Field label="total 路径">
+                              <input
+                                value={cfg.total_path ?? 'data.total'}
+                                onChange={e => onUpdate({ total_path: e.target.value || undefined })}
+                                placeholder="data.total"
+                                className={`${INPUT_CLS} w-full`}
+                              />
+                            </Field>
+                          </div>
+                        </>
                       )}
                     </div>
                   </motion.div>

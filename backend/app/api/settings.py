@@ -368,6 +368,11 @@ class DatasetConfigIn(BaseModel):
     end_param: str = "end_time"
     asset_type_param: str | None = None
     freq_param: str | None = None
+    page_size: int | None = Field(default=None, gt=0)
+    page_delay: float | None = Field(default=None, ge=0)
+    offset_param: str = "offset"
+    limit_param: str = "limit"
+    total_path: str = "data.total"
     timeout: float | None = Field(
         default=None,
         gt=0,

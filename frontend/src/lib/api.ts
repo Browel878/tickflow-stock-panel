@@ -932,6 +932,11 @@ export interface DatasetConfig {
   end_param?: string
   asset_type_param?: string | null
   freq_param?: string | null
+  page_size?: number | null
+  page_delay?: number | null
+  offset_param?: string
+  limit_param?: string
+  total_path?: string
   timeout?: number | null
 }
 

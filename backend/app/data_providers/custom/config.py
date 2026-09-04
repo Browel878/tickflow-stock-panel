@@ -37,6 +37,17 @@ class DatasetConfig:
     end_param: str = "end_time"
     asset_type_param: str | None = None
     freq_param: str | None = None
+    # realtime 全市场快照分页 (仅对 realtime 生效)。
+    # page_size 为空时不分页(保持向后兼容); 配置后按 offset/limit 翻页取完整个快照,
+    # total 由 total_path 从响应信封读取以估算页数。
+    page_size: int | None = None
+    offset_param: str = "offset"
+    limit_param: str = "limit"
+    total_path: str = "data.total"
+    # 分页时每页请求间的固定间隔(秒), 用于绕过上游按秒限频(QPS)的接口。
+    # 例如同花顺免费档对快照有严格的按秒频率上限, 一次 56 页的突发请求会 429,
+    # 配置 page_delay 后每页之间 sleep 该秒数再发下一页。
+    page_delay: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -91,6 +102,11 @@ def _dataset_from_dict(raw: dict[str, Any]) -> DatasetConfig:
         end_param=str(raw.get("end_param", "end_time") or "end_time").strip() or "end_time",
         asset_type_param=(str(raw.get("asset_type_param") or "").strip() or None),
         freq_param=(str(raw.get("freq_param") or "").strip() or None),
+        page_size=int(raw["page_size"]) if raw.get("page_size") is not None else None,
+        offset_param=str(raw.get("offset_param", "offset") or "offset").strip() or "offset",
+        limit_param=str(raw.get("limit_param", "limit") or "limit").strip() or "limit",
+        total_path=str(raw.get("total_path", "data.total") or "data.total").strip() or "data.total",
+        page_delay=float(raw["page_delay"]) if raw.get("page_delay") is not None else 0.0,
     )
 
 

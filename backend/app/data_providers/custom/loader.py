@@ -319,6 +319,7 @@ def _config_to_dict(config: CustomSourceConfig) -> dict:
             } if ds_name != "realtime" else {}),
             **({"asset_type_param": ds.asset_type_param} if ds_name == "minute" and ds.asset_type_param else {}),
             **({"freq_param": ds.freq_param} if ds_name == "minute" and ds.freq_param else {}),
+            **(_pagination_emit(ds) if ds_name == "realtime" else {}),
         }
     return out
 
@@ -382,6 +383,25 @@ def _sanitize_for_yaml(config: dict) -> dict:
         if ds:
             datasets_out[ds_name] = ds
     out["datasets"] = datasets_out
+    return out
+
+
+def _pagination_emit(ds: DatasetConfig) -> dict:
+    """把 realtime 分页配置转成 API 响应 dict (仅非默认值)。
+
+    与 _sanitize_dataset 的双向口径一致: 默认值不出现, 编辑回填与保存往返不漂移。
+    """
+    out: dict = {}
+    if ds.page_size is not None:
+        out["page_size"] = ds.page_size
+    if ds.page_delay and ds.page_delay > 0:
+        out["page_delay"] = ds.page_delay
+    if ds.offset_param and ds.offset_param != "offset":
+        out["offset_param"] = ds.offset_param
+    if ds.limit_param and ds.limit_param != "limit":
+        out["limit_param"] = ds.limit_param
+    if ds.total_path and ds.total_path != "data.total":
+        out["total_path"] = ds.total_path
     return out
 
 
@@ -449,6 +469,34 @@ def _sanitize_dataset(ds_name: str, ds_cfg: dict) -> dict:
             out["asset_type_param"] = asset_type_param
         if freq_param:
             out["freq_param"] = freq_param
+    if ds_name == "realtime":
+        # realtime 全市场快照分页: page_size 非空时才写, 空值不污染 YAML
+        if ds_cfg.get("page_size") is not None:
+            try:
+                page_size = int(ds_cfg["page_size"])
+            except (TypeError, ValueError):
+                raise ValueError(f"{ds_name}: page_size must be an integer") from None
+            if page_size <= 0:
+                raise ValueError(f"{ds_name}: page_size must be positive")
+            out["page_size"] = page_size
+        if ds_cfg.get("page_delay") is not None:
+            try:
+                page_delay = float(ds_cfg["page_delay"])
+            except (TypeError, ValueError):
+                raise ValueError(f"{ds_name}: page_delay must be a number") from None
+            if page_delay < 0:
+                raise ValueError(f"{ds_name}: page_delay must be non-negative")
+            if page_delay > 0:
+                out["page_delay"] = page_delay
+        offset_param = str(ds_cfg.get("offset_param") or "").strip()
+        limit_param = str(ds_cfg.get("limit_param") or "").strip()
+        total_path = str(ds_cfg.get("total_path") or "").strip()
+        if offset_param and offset_param != "offset":
+            out["offset_param"] = offset_param
+        if limit_param and limit_param != "limit":
+            out["limit_param"] = limit_param
+        if total_path and total_path != "data.total":
+            out["total_path"] = total_path
     request_params = [
         out.get("symbols_param", "symbols"),
         out.get("start_param", "start_time"),

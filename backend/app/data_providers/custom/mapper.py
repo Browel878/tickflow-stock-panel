@@ -32,7 +32,16 @@ def map_rows(rows: list[dict], field_map: dict[str, str]) -> pl.DataFrame:
     if not rows:
         return pl.DataFrame()
     df = pl.DataFrame(rows)
-    rename = {src: dst for src, dst in field_map.items() if src in df.columns and src != dst}
+    # 多个外部字段可能映射到同一内部字段(如 thscode/ticker → symbol)。
+    # 只取第一个在数据中存在的外部字段, 避免 rename 到同名列时 Polars 抛 DuplicateError。
+    chosen = list(dict.fromkeys(field_map.keys()))  # 保序去重源字段
+    seen: set[str] = set()
+    rename: dict[str, str] = {}
+    for src in chosen:
+        dst = field_map[src]
+        if src in df.columns and src != dst and dst not in seen:
+            rename[src] = dst
+            seen.add(dst)
     if rename:
         df = df.rename(rename)
     keep = list(dict.fromkeys(field_map.values()))

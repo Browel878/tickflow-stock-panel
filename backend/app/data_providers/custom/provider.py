@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,10 @@ from app.data_providers.normalizer import normalize_adj_factors, normalize_daily
 from app.tickflow.rate_limits import chunked, sleep_between_batches
 
 logger = logging.getLogger(__name__)
+
+# 分页上限兜底: 防止 total_path 指向空/错误字段时, 单页又恒满 page_size
+# 导致无限翻页打爆上游。正常全市场快照约 56 页, 远超实际页数。
+_MAX_PAGES = 500
 
 _REQUIRED = {
     "daily": {"symbol", "date", "open", "high", "low", "close", "volume", "amount"},
@@ -118,12 +123,58 @@ class GenericHTTPProvider:
         return pl.concat(frames, how="diagonal_relaxed") if frames else pl.DataFrame()
 
     def get_realtime(self) -> list[dict]:
+        """拉取实时行情。
+
+        返回内部标准字段的 dict 列表。默认单次拉取全量快照;
+        配置 `page_size` 后按 offset/limit 分页取完整个快照 (如全市场 5566 只)。
+        用 `total_path` 从响应信封读取总条数估算页数, 无 total 或 total 缺失时
+        按「单页不足 page_size」判定结束, 兜底防死循环 (fail-closed: 不超限取数)。
+        """
         cfg = self._dataset("realtime")
-        rows = self._request_rows(cfg)
+        rows = self._fetch_realtime_rows(cfg)
         df = self._mapped_frame(cfg, rows)
         if df.is_empty():
             return []
         return df.to_dicts()
+
+    def _fetch_realtime_rows(self, cfg: DatasetConfig) -> list[dict]:
+        """拉取 realtime 的原始行列表 (未映射)。
+
+        - 未配置 page_size: 单次请求。
+        - 配置 page_size: 按 offset/limit 翻页, 显式发送 limit=page_size,
+          每页间按 page_delay(秒) 或 rpm 节流, 合并所有页返回。
+        「试拉测试」也走此路径, 以便验证全量行数。
+        """
+        if cfg.page_size is None or cfg.page_size <= 0:
+            return self._request_rows(cfg)
+
+        all_rows: list[dict] = []
+        total: int | None = None
+        offset = 0
+        for page_index in range(_MAX_PAGES):
+            if page_index > 0:
+                # 按需节流: 优先用 page_delay(应对按秒限频的上游), 否则回退 rpm 槽位表
+                if cfg.page_delay and cfg.page_delay > 0:
+                    time.sleep(cfg.page_delay)
+                else:
+                    sleep_between_batches(page_index + 1, cfg.rpm)
+            page_params = {cfg.offset_param: offset, cfg.limit_param: cfg.page_size}
+            payload = self._request_payload(cfg, override_params=page_params)
+            rows = extract_rows(payload, cfg.response_path)
+            if not rows:
+                break
+            all_rows.extend(rows)
+            if total is None:
+                total = _lookup_total(payload, cfg.total_path)
+            offset += len(rows)
+            # 分页结束判定: 拿到 total 则按 total 判; 否则当本页不足 page_size 视为末页
+            if total is not None:
+                if offset >= total:
+                    break
+            elif len(rows) < cfg.page_size:
+                break
+
+        return all_rows
 
     def get_minute(
         self,
@@ -215,7 +266,7 @@ class GenericHTTPProvider:
         end_time = datetime.now()
         start_time = end_time - timedelta(days=7)
         if dataset == "realtime":
-            rows = self._request_rows(cfg)
+            rows = self._fetch_realtime_rows(cfg)
         elif dataset == "minute":
             override: dict[str, Any] = {}
             if cfg.asset_type_param:
@@ -268,6 +319,27 @@ class GenericHTTPProvider:
         override_params: dict[str, Any] | None = None,
         override_body: dict[str, Any] | None = None,
     ) -> list[dict]:
+        payload = self._request_payload(
+            cfg, symbols=symbols, start_time=start_time, end_time=end_time,
+            override_params=override_params, override_body=override_body,
+        )
+        return extract_rows(payload, cfg.response_path)
+
+    def _request_payload(
+        self,
+        cfg: DatasetConfig,
+        *,
+        symbols: list[str] | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        override_params: dict[str, Any] | None = None,
+        override_body: dict[str, Any] | None = None,
+    ) -> Any:
+        """发送一次请求, 返回完整解析后的响应 JSON (信封), 不抽取 item。
+
+        `get_realtime` 分页时需要读取信封上的 total 字段, 因此把抽取与请求分离,
+        便于分页循环直接拿信封计算页数。
+        """
         headers, auth_params = self._auth_parts()
         params = dict(cfg.params)
         params.update(auth_params)
@@ -297,7 +369,7 @@ class GenericHTTPProvider:
             request_kwargs["json"] = body
         resp = self._client.request(method, cfg.url, **request_kwargs)
         resp.raise_for_status()
-        return extract_rows(resp.json(), cfg.response_path)
+        return resp.json()
 
     def _auth_parts(self) -> tuple[dict[str, str], dict[str, str]]:
         auth = self.config.auth
@@ -314,6 +386,27 @@ class GenericHTTPProvider:
         if auth.type == "query":
             return {}, {auth.param: token}
         return {}, {}
+
+
+def _lookup_total(payload: Any, total_path: str) -> int | None:
+    """按点路径从响应信封读取总条数 (如 THS 快照的 data.total)。
+
+    读取失败/非数字时返回 None, 分页循环据此走「单页不足 page_size 判定末页」。
+    """
+    if not total_path:
+        return None
+    data = payload
+    for part in total_path.split("."):
+        if not part:
+            continue
+        if isinstance(data, dict):
+            data = data.get(part)
+        else:
+            return None
+    try:
+        return int(data)
+    except (TypeError, ValueError):
+        return None
 
 
 def _token_from_env(name: str | None) -> str | None:
