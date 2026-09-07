@@ -4,21 +4,23 @@
  * 数据源: /api/screener/market-snapshot (同花顺全市场实时快照 → enriched 缓存)。
  * 功能: 板块分页签(全部/沪A/深A/创业板/科创/北交所) + 关键词搜索 + 可排序虚拟化表格
  *       (代码/名称/最新价/涨跌幅/涨跌额/今开/昨收/最高/最低/成交量/成交额/振幅/换手率/量比/总市值)
- *       + 自动轮询(默认 10s, 可选手动) + 手动刷新 + 点击行打开个股预览。
+ *       + 自动轮询(默认 10s) + 手动刷新。
+ * 交互: 左键点击行 / 键盘回车 → 跳转个股分析页; 右键行 → 弹出"加入自选"菜单。
  * 口径: change_pct / amplitude 为小数制(0.0366=3.66%), turnover_rate 为百分数值(3.66=3.66%),
  *       market_cap 为元。
  */
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Search, RefreshCw, BarChart3 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { Search, RefreshCw, BarChart3, Plus } from 'lucide-react'
 import { api, type MarketSnapshotRow } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtPrice, fmtPct, fmtBigNum, fmtVolume, priceColorClass } from '@/lib/format'
 import { useTableSort } from '@/components/stock-table/useTableSort'
 import { StockDataTable } from '@/components/stock-table/StockDataTable'
 import type { ColumnConfig } from '@/lib/list-columns'
-import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { cn } from '@/lib/cn'
+import { toast } from '@/components/Toast'
 
 // ===== 板块分页签 =====
 const MARKET_TABS = [
@@ -70,22 +72,27 @@ function getSortValue(r: MarketSnapshotRow, c: ColumnConfig): any {
   return (r as any)[c.source.type === 'builtin' ? c.source.key : c.id]
 }
 
-function thCls(align?: ColumnConfig['align']): string {
-  if (align === 'left') return 'px-3 py-2.5 font-medium text-left whitespace-nowrap'
-  if (align === 'center') return 'px-3 py-2.5 font-medium text-center whitespace-nowrap'
-  return 'px-3 py-2.5 font-medium text-right whitespace-nowrap'
-}
-
 function tdCls(align?: ColumnConfig['align']): string {
   if (align === 'left') return 'px-3 py-1.5 text-left'
   if (align === 'center') return 'px-3 py-1.5 text-center'
   return 'px-3 py-1.5 text-right tabular-nums'
 }
 
+/** 右键菜单状态: 位置 + 目标股票 */
+interface CtxMenuState {
+  x: number
+  y: number
+  symbol: string
+  name: string
+}
+
 export function Market() {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const [tab, setTab] = useState<MarketTab>('all')
   const [query, setQuery] = useState('')
-  const [preview, setPreview] = useState<{ symbol: string; name: string } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const snapshot = useQuery({
     queryKey: QK.marketSnapshot,
@@ -127,6 +134,33 @@ export function Market() {
     }
     return { up, down, flat, totalAmt }
   }, [rows])
+
+  // 行交互: 左键/回车 → 个股分析页
+  const openStockAnalysis = (r: MarketSnapshotRow) => {
+    const q = new URLSearchParams({ symbol: r.symbol, name: r.name ?? r.symbol })
+    navigate(`/stock-analysis?${q.toString()}`)
+  }
+
+  // 行交互: 右键 → 自选股添加菜单
+  const onRowContextMenu = (r: MarketSnapshotRow, e: React.MouseEvent) => {
+    e.preventDefault()
+    setCtxMenu({ x: e.clientX, y: e.clientY, symbol: r.symbol, name: r.name ?? r.symbol })
+  }
+
+  // 点击菜单外部关闭
+  const dismissMenu = () => setCtxMenu(null)
+
+  const addWatch = useMutation({
+    mutationFn: (symbol: string) => api.watchlistAdd(symbol),
+    onSuccess: (data) => {
+      qc.setQueryData(QK.watchlist, data)
+      qc.invalidateQueries({ queryKey: QK.watchlist })
+      qc.invalidateQueries({ queryKey: ['watchlist-enriched'] })
+      toast('已加入自选', 'success')
+    },
+    onError: () => toast('加入自选失败', 'error'),
+    onSettled: dismissMenu,
+  })
 
   return (
     <div className="p-5 space-y-4 max-w-[1600px]">
@@ -185,92 +219,105 @@ export function Market() {
         </div>
       </div>
 
-      {/* 行情表 */}
-      <StockDataTable
-        columns={COLUMNS}
-        rows={sorted}
-        sort={sort}
-        onSortToggle={toggle}
-        headerSticky
-        minWidth={1500}
-        rowClassName={() => 'border-t border-border hover:bg-elevated/50 cursor-pointer'}
-        renderCell={(r, c) => {
-          const k = c.source.type === 'builtin' ? c.source.key : c.id
-          const v = (r as any)[k]
-          const align = c.align
-          const base = tdCls(align)
-          switch (k) {
-            case 'symbol':
-              return <td className={base + ' text-muted font-mono'}>{v}</td>
-            case 'name':
-              return <td className={base + ' font-medium text-foreground'}>{v ?? '—'}</td>
-            case 'close':
-              return <td className={base + ' font-semibold ' + priceColorClass(r.change_pct)}>{fmtPrice(v)}</td>
-            case 'change_pct':
-              return (
-                <td className={base}>
-                  <span className={cn(
-                    'inline-flex items-center px-1.5 py-0.5 rounded min-w-[64px] justify-center text-xs font-medium',
-                    (r.change_pct ?? 0) > 0 ? 'bg-bull/12 text-bull'
-                      : (r.change_pct ?? 0) < 0 ? 'bg-bear/12 text-bear'
-                        : 'bg-elevated text-secondary',
-                  )}>
-                    {fmtPct(v)}
-                  </span>
-                </td>
-              )
-            case 'change_amount':
-              return <td className={base + ' ' + priceColorClass(v)}>{v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2)}</td>
-            case 'open':
-            case 'prev_close':
-            case 'high':
-            case 'low':
-              return <td className={base + ' text-muted'}>{fmtPrice(v)}</td>
-            case 'volume':
-              return <td className={base + ' text-muted'}>{fmtVolume(v)}</td>
-            case 'amount':
-              return <td className={base + ' text-muted'}>{fmtBigNum(v)}</td>
-            case 'amplitude':
-              return <td className={base + ' text-muted'}>{fmtPct(v)}</td>
-            case 'turnover_rate':
-              // enriched 换手率为百分数值(3.66=3.66%)
-              return <td className={base + ' text-muted'}>{v == null ? '—' : `${v.toFixed(2)}%`}</td>
-            case 'vol_ratio_5d':
-              return <td className={base + ' text-muted'}>{v == null ? '—' : v.toFixed(2)}</td>
-            case 'market_cap':
-              return <td className={base + ' text-muted'}>{fmtBigNum(v)}</td>
-            default:
-              return <td className={base}>{v == null ? '—' : String(v)}</td>
-          }
-        }}
-        extraHeader={
-          <th className={thCls('center')}></th>
-        }
-        renderExtraCol={(r) => (
-          <td className="px-3 py-1.5 text-center">
-            <button
-              onClick={(e) => { e.stopPropagation(); setPreview({ symbol: r.symbol, name: r.name ?? r.symbol }) }}
-              className="text-[10px] px-2 py-1 rounded bg-elevated text-muted hover:text-accent transition-colors"
-              title="查看个股"
-            >
-              详情
-            </button>
-          </td>
-        )}
-      />
+      {/* 行情表: 固定高度滚动容器 → 出现可拖动的垂直滚动条, 虚拟化跟随该容器滚动 */}
+      <div className="rounded-card border border-border bg-surface/30 overflow-hidden">
+        <div className="h-[calc(100vh-260px)] min-h-[320px] overflow-auto scrollbar-gutter-stable">
+          <StockDataTable
+            columns={COLUMNS}
+            rows={sorted}
+            sort={sort}
+            onSortToggle={toggle}
+            headerSticky
+            minWidth={1500}
+            className="border-0 rounded-none"
+            rowClassName={() => 'border-t border-border hover:bg-elevated/50 cursor-pointer'}
+            onRowClick={(r) => openStockAnalysis(r)}
+            onRowContextMenu={(r, e) => onRowContextMenu(r, e)}
+            renderCell={(r, c) => {
+              const k = c.source.type === 'builtin' ? c.source.key : c.id
+              const v = (r as any)[k]
+              const align = c.align
+              const base = tdCls(align)
+              switch (k) {
+                case 'symbol':
+                  return <td className={base + ' text-muted font-mono'}>{v}</td>
+                case 'name':
+                  return <td className={base + ' font-medium text-foreground'}>{v ?? '—'}</td>
+                case 'close':
+                  return <td className={base + ' font-semibold ' + priceColorClass(r.change_pct)}>{fmtPrice(v)}</td>
+                case 'change_pct':
+                  return (
+                    <td className={base}>
+                      <span className={cn(
+                        'inline-flex items-center px-1.5 py-0.5 rounded min-w-[64px] justify-center text-xs font-medium',
+                        (r.change_pct ?? 0) > 0 ? 'bg-bull/12 text-bull'
+                          : (r.change_pct ?? 0) < 0 ? 'bg-bear/12 text-bear'
+                            : 'bg-elevated text-secondary',
+                      )}>
+                        {fmtPct(v)}
+                      </span>
+                    </td>
+                  )
+                case 'change_amount':
+                  return <td className={base + ' ' + priceColorClass(v)}>{v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2)}</td>
+                case 'open':
+                case 'prev_close':
+                case 'high':
+                case 'low':
+                  return <td className={base + ' text-muted'}>{fmtPrice(v)}</td>
+                case 'volume':
+                  return <td className={base + ' text-muted'}>{fmtVolume(v)}</td>
+                case 'amount':
+                  return <td className={base + ' text-muted'}>{fmtBigNum(v)}</td>
+                case 'amplitude':
+                  return <td className={base + ' text-muted'}>{fmtPct(v)}</td>
+                case 'turnover_rate':
+                  // enriched 换手率为百分数值(3.66=3.66%)
+                  return <td className={base + ' text-muted'}>{v == null ? '—' : `${v.toFixed(2)}%`}</td>
+                case 'vol_ratio_5d':
+                  return <td className={base + ' text-muted'}>{v == null ? '—' : v.toFixed(2)}</td>
+                case 'market_cap':
+                  return <td className={base + ' text-muted'}>{fmtBigNum(v)}</td>
+                default:
+                  return <td className={base}>{v == null ? '—' : String(v)}</td>
+              }
+            }}
+          />
+        </div>
+      </div>
 
       {/* 行情概要提示 */}
       <div className="text-[10px] text-muted/40 flex flex-wrap gap-x-4 gap-y-1">
         <span>数据来自同花顺全市场实时快照，交易时段每 10 秒自动刷新</span>
-        <span>涨跌幅/振幅为小数制，换手率为百分数</span>
+        <span>左键/回车打开个股分析，右键加入自选</span>
         <span>点击表头排序，输入代码/名称筛选</span>
       </div>
 
-      <StockPreviewDialog
-        symbol={preview?.symbol ?? null}
-        name={preview?.name ?? ''}
-        onClose={() => setPreview(null)}
-      />
+      {/* 右键菜单: 加入自选 */}
+      {ctxMenu && (
+        <>
+          {/* 遮罩: 点击任意处关闭 */}
+          <div className="fixed inset-0 z-40" onClick={dismissMenu} onContextMenu={(e) => { e.preventDefault(); dismissMenu() }} />
+          <div
+            ref={menuRef}
+            className="fixed z-50 min-w-44 rounded-lg border border-border bg-surface shadow-xl p-1"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          >
+            <div className="px-3 py-1.5 border-b border-border/40 mb-1">
+              <div className="text-xs font-medium text-foreground truncate">{ctxMenu.name}</div>
+              <div className="text-[10px] font-mono text-muted">{ctxMenu.symbol}</div>
+            </div>
+            <button
+              onClick={() => addWatch.mutate(ctxMenu.symbol)}
+              disabled={addWatch.isPending}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs text-foreground/90 hover:bg-elevated transition-colors disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5 text-accent" />
+              {addWatch.isPending ? '添加中…' : '加入自选股'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

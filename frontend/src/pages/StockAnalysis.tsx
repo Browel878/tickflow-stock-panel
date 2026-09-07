@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { Sparkles, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, AlertTriangle } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
@@ -32,14 +33,24 @@ export function StockAnalysis() {
   const [confirmReport, setConfirmReport] = useState<{ id: string; created_at: string; focus: string } | null>(null)
   const [previewSymbol, setPreviewSymbol] = useState<string | null>(null)
   const [showPriceAlerts, setShowPriceAlerts] = useState(false)
+  const [searchParams] = useSearchParams()
   const { last: lastStock, remember: rememberStock } = useLastStock('stock-analysis')
 
-  // 进入页面立即加载历史报告(供右侧常驻列表)。store 内部有 historyLoaded 去重, 重复调用安全。
+  // 进入页面立即加载历史报告(供历史报告面板)。store 内部有 historyLoaded 去重, 重复调用安全。
   useEffect(() => { loadHistory() }, [])
 
-  // 自动恢复上次选中的股票(切走再回来不丢)。useLastStock 的 last 来自 localStorage, 同步可用。
+  // 支持 URL 直达: /stock-analysis?symbol=000001.SZ&name=平安银行 (行情页左键/回车进入)。
+  // URL 参数优先于 localStorage 记忆; 同时写回记忆, 后续切换不丢。
   useEffect(() => {
-    if (!symbol && lastStock) {
+    const urlSymbol = searchParams.get('symbol')
+    if (urlSymbol) {
+      const urlName = searchParams.get('name') ?? ''
+      setSymbol(urlSymbol)
+      setName(urlName)
+      setConfirmReport(null)
+      setShowPriceAlerts(false)
+      rememberStock(urlSymbol, urlName)
+    } else if (!symbol && lastStock) {
       setSymbol(lastStock.symbol)
       setName(lastStock.name)
     }
@@ -126,20 +137,18 @@ export function StockAnalysis() {
           )}
         </div>
 
-        {/* 主体:左侧当前个股看板 + 右侧常驻历史报告 */}
-        <div className="grid grid-cols-[1fr_288px] gap-6 items-start">
-          <div className="min-w-0">
-            {!symbol ? (
-              <EmptyState
-                icon={LineChart}
-                title="选择一只股票开始分析"
-                hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 基本面 / 财务面 / 消息面四维综合分析。"
-              />
-            ) : (
-              <StockAnalysisBoard symbol={symbol} />
-            )}
-          </div>
-          <HistorySidebar />
+        {/* 主体: 顶部历史报告(可展开) + 当前个股看板 */}
+        <HistoryPanel />
+        <div className="min-w-0">
+          {!symbol ? (
+            <EmptyState
+              icon={LineChart}
+              title="选择一只股票开始分析"
+              hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 基本面 / 财务面 / 消息面四维综合分析。"
+            />
+          ) : (
+            <StockAnalysisBoard symbol={symbol} />
+          )}
         </div>
       </div>
 
@@ -248,69 +257,88 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
   )
 }
 
-// ===== 左侧常驻:历史报告侧栏(所有股票,按时间倒序平铺) =====
-function HistorySidebar() {
+// ===== 顶部可展开:历史报告面板 =====
+// 默认收起为一条窄横条(标题+数量), 点击展开为横向滚动的报告列表,
+// 避免右侧常驻侧栏挤压看板宽度。报告条支持直接点击打开/删除。
+function HistoryPanel() {
   const { reports, loaded } = useHistoryReports()
+  const [open, setOpen] = useState(false)
 
   return (
-    <aside className="self-start sticky top-0">
-      <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
-        <div className="px-3 py-2.5 border-b border-border/40 flex items-center gap-2">
-          <HistoryIcon className="h-3.5 w-3.5 text-sky-400 shrink-0" />
-          <span className="text-xs font-medium text-foreground">历史报告</span>
-          {loaded && reports.length > 0 && (
-            <span className="ml-auto text-[10px] text-muted">{reports.length}</span>
+    <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
+      {/* 顶栏: 点击切换展开/收起 */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-elevated/30 transition-colors"
+        title={open ? '收起历史报告' : '展开历史报告'}
+      >
+        <HistoryIcon className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+        <span className="text-xs font-medium text-foreground">历史报告</span>
+        {loaded && reports.length > 0 && (
+          <span className="text-[10px] text-muted">{reports.length}</span>
+        )}
+        <span className="ml-auto text-[10px] text-muted/60">
+          {open ? '点击收起' : '点击展开'}
+        </span>
+        <svg
+          className={`h-3.5 w-3.5 text-muted transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+        >
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="border-t border-border/40">
+          {!loaded ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-4 w-4 animate-spin text-muted" />
+            </div>
+          ) : reports.length === 0 ? (
+            <div className="px-3 py-6 text-center">
+              <p className="text-xs text-muted">还没有任何个股分析报告</p>
+              <p className="text-[10px] text-muted/60 mt-1">选一只股票,点「AI 个股分析」生成</p>
+            </div>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto p-2.5">
+              {reports.map(r => (
+                <div
+                  key={r.id}
+                  className="group shrink-0 w-56 rounded-lg border border-border/40 bg-elevated/20 p-2.5 hover:border-border hover:bg-elevated/40 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => openHistoryReport(r.id)}
+                      className="flex-1 text-left min-w-0"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-medium text-foreground truncate">{r.name || r.symbol}</span>
+                        <span className="text-[10px] font-mono text-muted shrink-0">{r.symbol}</span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted">
+                        <span>{fmtRelative(r.created_at)}</span>
+                        {r.close != null && <span className="font-mono">价 {r.close.toFixed(2)}</span>}
+                        {r.focus && <span className="text-sky-300/70 truncate">关注: {r.focus}</span>}
+                      </div>
+                      {r.summary && (
+                        <div className="mt-1 text-[11px] text-muted truncate">{r.summary}</div>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => { deleteReport(r.id); toast('已删除', 'success') }}
+                      className="shrink-0 text-[10px] text-muted/60 hover:text-danger transition-colors px-1 py-0.5 opacity-0 group-hover:opacity-100"
+                      title="删除"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
-
-        {!loaded ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-4 w-4 animate-spin text-muted" />
-          </div>
-        ) : reports.length === 0 ? (
-          <div className="px-3 py-10 text-center">
-            <p className="text-xs text-muted">还没有任何个股分析报告</p>
-            <p className="text-[10px] text-muted/60 mt-1">选一只股票,点「AI 个股分析」生成</p>
-          </div>
-        ) : (
-          <div className="max-h-[calc(100vh-220px)] overflow-y-auto p-2 space-y-1.5">
-            {reports.map(r => (
-              <div
-                key={r.id}
-                className="group rounded-lg border border-border/40 bg-elevated/20 p-2.5 hover:border-border hover:bg-elevated/40 transition-colors"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => openHistoryReport(r.id)}
-                    className="flex-1 text-left min-w-0"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-xs font-medium text-foreground truncate">{r.name || r.symbol}</span>
-                      <span className="text-[10px] font-mono text-muted shrink-0">{r.symbol}</span>
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted">
-                      <span>{fmtRelative(r.created_at)}</span>
-                      {r.close != null && <span className="font-mono">价 {r.close.toFixed(2)}</span>}
-                      {r.focus && <span className="text-sky-300/70 truncate">关注: {r.focus}</span>}
-                    </div>
-                    {r.summary && (
-                      <div className="mt-1 text-[11px] text-muted truncate">{r.summary}</div>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => { deleteReport(r.id); toast('已删除', 'success') }}
-                    className="shrink-0 text-[10px] text-muted/60 hover:text-danger transition-colors px-1 py-0.5 opacity-0 group-hover:opacity-100"
-                    title="删除"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </aside>
+      )}
+    </div>
   )
 }
 

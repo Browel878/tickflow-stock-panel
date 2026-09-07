@@ -38,6 +38,10 @@ export interface StockDataTableProps {
   renderHeaderContent?: (col: ColumnConfig) => ReactNode | undefined
   /** 外层容器 className */
   className?: string
+  /** 行点击（左键）。传入后行可点击并可聚焦(键盘 Enter 触发同一回调)。 */
+  onRowClick?: (r: any, e: React.SyntheticEvent) => void
+  /** 行右键菜单。返回 false/void；需自行 preventDefault 阻止浏览器默认菜单。 */
+  onRowContextMenu?: (r: any, e: React.MouseEvent) => void
 }
 
 function alignThClass(align: ColumnConfig['align']): string {
@@ -58,6 +62,8 @@ export function StockDataTable({
   extraHeader,
   renderHeaderContent,
   className = 'rounded-card border border-border overflow-x-auto',
+  onRowClick,
+  onRowContextMenu,
 }: StockDataTableProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const visibleColumns = columns.filter(c => c.visible)
@@ -99,6 +105,16 @@ export function StockDataTable({
       ref={virtualRow ? rowVirtualizer.measureElement : undefined}
       data-index={virtualRow?.index}
       className={`transition-colors duration-150 ease-smooth group ${rowClassName(r)}`}
+      onClick={onRowClick ? (e) => onRowClick(r, e) : undefined}
+      onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(r, e) : undefined}
+      onKeyDown={
+        onRowClick
+          ? (e) => { if (e.key === 'Enter') { e.preventDefault(); onRowClick(r, e) } }
+          : undefined
+      }
+      tabIndex={onRowClick ? 0 : undefined}
+      role={onRowClick ? 'button' : undefined}
+      aria-label={onRowClick ? `打开 ${r.symbol}` : undefined}
     >
       {visibleColumns.map(col => {
         // renderCell 返回的 <td> 无 key, 这里补上避免 React key 警告
