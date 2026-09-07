@@ -476,7 +476,8 @@ def market_snapshot(request: Request):
         df = df.with_columns((pl.col("close") * pl.col("float_shares")).alias("float_market_cap"))
 
     cols = [
-        "symbol", "name", "close", "change_pct", "amount", "volume",
+        "symbol", "name", "open", "high", "low", "prev_close", "close",
+        "change_pct", "change_amount", "amplitude", "amount", "volume",
         "turnover_rate", "vol_ratio_5d", "total_shares", "float_shares",
         "market_cap", "float_market_cap", "consecutive_limit_ups",
     ]
